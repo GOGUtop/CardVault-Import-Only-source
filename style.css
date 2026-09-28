@@ -1681,3 +1681,28 @@ body.cv-no-scroll{
     .cv-floating-root[data-side="left"] .cv-floating-menu { right: calc(100% + 9px); }
     .cv-floating-action { min-height: 54px; }
 }
+
+
+/* CardVault Import-Only 1.2.4 — 纯浏览/导入界面 */
+#cardvault_settings[hidden]{display:none!important}
+.cv-overlay #cv_ai_classify,
+.cv-overlay #cv_ai_retry_failed,
+.cv-overlay #cv_library_refresh,
+.cv-overlay .cv-ai-api-badge,
+.cv-overlay .cv-ai-filter-current,
+.cv-ai-picker #cv_ai_reclassify_all{display:none!important}
+@media(max-width:760px){
+  .cv-overlay.cv-mobile-fullscreen .cv-header.cv-header-with-switch{
+    grid-template-columns:44px minmax(0,1fr) 44px!important;
+    grid-template-areas:
+      "brand switch close"
+      "search search search"!important;
+  }
+  .cv-overlay.cv-mobile-fullscreen .cv-header.cv-header-with-switch .cv-brand{grid-area:brand!important}
+  .cv-overlay.cv-mobile-fullscreen .cv-header.cv-header-with-switch .cv-library-switch{
+    grid-area:switch!important;
+    grid-template-columns:minmax(0,1fr)!important;
+  }
+  .cv-overlay.cv-mobile-fullscreen .cv-header.cv-header-with-switch .cv-search-wrap{grid-area:search!important}
+  .cv-overlay.cv-mobile-fullscreen .cv-header.cv-header-with-switch #cv_library_close{grid-area:close!important}
+}

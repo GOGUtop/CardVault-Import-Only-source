@@ -1577,9 +1577,6 @@ function createOverlay(mode = 'cards', options = {}) {
             <button class="menu_button active" data-cv-mode="cards" type="button"><i class="fa-regular fa-address-card"></i><span>角色卡库</span></button>
           </nav>
           <div class="cv-search-wrap"><i class="fa-solid fa-magnifying-glass"></i><input id="cv_library_search" class="text_pole" placeholder="搜索角色、作者或标签"></div>
-          <button id="cv_ai_classify" class="menu_button cv-ai-classify-button" type="button" title="只分类新增 / 未分类角色卡；不会写入 CardVault"><i class="fa-solid fa-wand-magic-sparkles"></i><span>AI分类</span></button>
-          <button id="cv_ai_retry_failed" class="menu_button cv-ai-retry-button" type="button" hidden title="只重新尝试上一次失败的角色卡"><i class="fa-solid fa-rotate-right"></i><span>重试失败</span></button>
-          <button id="cv_library_refresh" class="menu_button" type="button" title="刷新"><i class="fa-solid fa-rotate"></i></button>
           <button id="cv_library_close" class="menu_button cv-close" type="button" title="关闭"><i class="fa-solid fa-xmark"></i></button>
         </header>
         <main id="cv_library_body" class="cv-library-body"><div class="cv-loading"><i class="fa-solid fa-spinner fa-spin"></i> 正在读取卡库……</div></main>
@@ -1591,9 +1588,6 @@ function createOverlay(mode = 'cards', options = {}) {
 
     overlay.addEventListener('mousedown', event => { if (event.target === overlay) closeOverlay(); });
     overlay.querySelector('#cv_library_close').addEventListener('click', closeOverlay);
-    overlay.querySelector('#cv_library_refresh').addEventListener('click', () => loadCards(overlay.querySelector('#cv_library_search').value, { force: true }));
-    overlay.querySelector('#cv_ai_classify').addEventListener('click', () => runAiClassification().catch(error => notify('error', error.message)));
-    overlay.querySelector('#cv_ai_retry_failed').addEventListener('click', () => runAiClassification({ onlyFailed: true }).catch(error => notify('error', error.message)));
 
     let timer = 0;
     const search = overlay.querySelector('#cv_library_search');
@@ -2146,13 +2140,12 @@ function openAiFilterPicker(cards) {
           <div><b>选择标签</b><span id="cv_ai_pick_count">${selected.size}</span></div>
           <button class="menu_button cv-ai-picker-close" type="button" title="关闭"><i class="fa-solid fa-xmark"></i></button>
         </div>
-        <div class="cv-ai-picker-note">${escapeHtml(classificationTaxonomy().name)} · ${escapeHtml(aiGenerationModeLabel())} · ${classifiedCount}/${cards.length} 已分类 · 可多选 · AI 仅使用下列固定标签</div>
+        <div class="cv-ai-picker-note">服务器共享分类 · ${classifiedCount}/${cards.length} 已分类 · 可多选</div>
         <div class="cv-ai-picker-chips">
           ${[...currentCategoryTags(), '未分类'].map(tag => `<button class="menu_button ${selected.has(tag) ? 'active' : ''}" type="button" data-cv-ai-pick="${escapeHtml(tag)}">${escapeHtml(tag === '未分类' ? tag : aiTagLabel(tag))}</button>`).join('')}
         </div>
         <div class="cv-ai-picker-footer">
           <button id="cv_ai_clear_filters" class="menu_button cv-ai-clear-filter" type="button">全部清除</button>
-          <button id="cv_ai_reclassify_all" class="menu_button cv-ai-reclassify-all" type="button" title="手动重新调用 AI 分类当前列表中的全部角色卡"><i class="fa-solid fa-arrows-rotate"></i> 重新分类全部</button>
         </div>
       </section>`;
     const sync = () => {
@@ -2172,10 +2165,6 @@ function openAiFilterPicker(cards) {
         sync();
     }));
     backdrop.querySelector('#cv_ai_clear_filters').addEventListener('click', () => { selected.clear(); sync(); });
-    backdrop.querySelector('#cv_ai_reclassify_all').addEventListener('click', () => {
-        closeAiFilterPicker();
-        runAiClassification({ forceAll: true }).catch(error => notify('error', error.message));
-    });
     backdrop.querySelector('.cv-ai-picker-close').addEventListener('click', closeAiFilterPicker);
     backdrop.addEventListener('click', event => { if (event.target === backdrop) closeAiFilterPicker(); });
     win.append(backdrop);
@@ -2189,11 +2178,7 @@ function buildAiFilterBar(cards) {
     bar.innerHTML = `
       <button id="cv_ai_filter_open" class="menu_button cv-ai-filter-open ${selected.length ? 'active' : ''}" type="button">
         <i class="fa-solid fa-tags"></i><span>选择标签</span><b>${selected.length}</b>
-      </button>
-      <div class="cv-ai-api-badge" title="AI 分类只走 CardVault 独立 API，不读取或占用聊天主 API">
-        <i class="fa-solid fa-plug-circle-check"></i><span>独立 API</span><small>${escapeHtml(classifierConfig().classifierModel || '未选模型')}</small>
-      </div>
-      <div class="cv-ai-filter-current">${selected.length ? selected.slice(0, 4).map(tag => `<span>${escapeHtml(tag === '未分类' ? tag : aiTagLabel(tag))}</span>`).join('') + (selected.length > 4 ? `<span>+${selected.length - 4}</span>` : '') : `<small data-cv-ai-status>${classified.length}/${cards.length} 已分类 · ${escapeHtml(aiGenerationModeLabel())}</small>`}</div>`;
+      </button>`;
     bar.querySelector('#cv_ai_filter_open').addEventListener('click', () => openAiFilterPicker(cards));
     return bar;
 }
@@ -5100,7 +5085,7 @@ async function initialize() {
             void refreshCardListFromServer().catch(error => console.warn('[CardVault] background card-list warmup skipped', error));
             void runImportGuardianSweep({ force: true });
         }
-        console.info(`[CardVault] Import-Only 1.2.3 loaded: ST ${sillyTavernUserHandle} -> ${accountDisplayName(requiredCardVaultAccount())}; transport=${cardVaultTransportMode}`);
+        console.info(`[CardVault] Import-Only 1.2.4 loaded: ST ${sillyTavernUserHandle} -> ${accountDisplayName(requiredCardVaultAccount())}; transport=${cardVaultTransportMode}`);
     } catch (error) {
         initialized = false;
         console.error('[CardVault] Initialization failed', error);
@@ -5117,7 +5102,7 @@ document.addEventListener('keydown', handleEscape);
 
 // Optional compatibility bridge: standalone CardVault can still be opened by an existing VVV shell if present.
 globalThis.VVVUnifiedCardVault = Object.assign(globalThis.VVVUnifiedCardVault || {}, {
-    version: '1.2.3-import-only',
+    version: '1.2.4-import-only',
     build: 'import-only',
     open: async () => { if (!initialized) await initialize(); return openLibrary(); },
     close: () => closeOverlay(),

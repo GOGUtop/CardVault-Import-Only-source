@@ -1,4 +1,6 @@
-# CardVault · SillyTavern 只读角色卡导入版
+# CardVault · 只读角色卡导入版
+
+> v1.2.4：界面只保留角色卡浏览、服务器共享标签筛选和“自动导入酒馆”。AI 分类、失败重试、手动刷新以及扩展配置面板均已隐藏/移除。
 
 这是根据原 CardVault Standalone 源码裁出的 **Import-Only / 只读导入版**。
 
