@@ -1570,7 +1570,11 @@ body.cv-no-scroll{
     user-select: none;
     -webkit-user-select: none;
     touch-action: none;
+    transition: left .18s cubic-bezier(.2,.8,.2,1), top .12s ease;
+    will-change: left, top;
 }
+
+.cv-floating-root.is-dragging { transition: none; }
 
 .cv-floating-ball {
     position: absolute;

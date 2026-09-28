@@ -5,6 +5,7 @@ const CARDVAULT_IMPORT_ONLY_BUILD = true;
 const CARDVAULT_AUTO_LOGIN_USERNAME = 'card2';
 const CARDVAULT_AUTO_LOGIN_PASSWORD = '2';
 const CARDVAULT_FLOAT_POSITION_KEY = 'cardvault_floating_ball_position_v1';
+const CARDVAULT_AI_PERSISTENT_KEY = 'cardvault_ai_classifications_persistent_v1'; // 只读取 Full+Anima 写入的共享永久分类
 const LEGACY_GLOBAL_PERSISTENT_TOKEN_KEY = 'cardvault_persistent_token_v2';
 const LEGACY_SESSION_TOKEN_KEY = 'cardvault_session_token_v1';
 const CARDVAULT_ACCESS_POLICY = Object.freeze({
@@ -206,6 +207,28 @@ function removeCardVaultUi() {
     document.querySelectorAll('#cardvault_settings').forEach(node => node.remove());
 }
 
+// Import-Only 不负责写入“永久分类”；它只读取 Full+Anima 写入的共享缓存。
+// 两个版本使用同一 localStorage key，所以在 Full+Anima 分类后，切换到本版本仍会看到相同标签。
+let sharedPersistentAiClassificationCache = null;
+
+function loadSharedPersistentAiClassifications() {
+    try {
+        const raw = globalThis.localStorage?.getItem(CARDVAULT_AI_PERSISTENT_KEY) || '';
+        const parsed = raw ? JSON.parse(raw) : {};
+        sharedPersistentAiClassificationCache = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    } catch (error) {
+        console.warn('[CardVault] 无法读取 Full+Anima 共享 AI 分类缓存', error);
+        sharedPersistentAiClassificationCache = {};
+    }
+    return sharedPersistentAiClassificationCache;
+}
+
+function mergeSharedPersistentAiClassifications(cfg) {
+    const shared = loadSharedPersistentAiClassifications();
+    // 共享永久结果优先；本版本自己的临时结果只在共享缓存没有该卡时显示。
+    cfg.aiClassifications = { ...(cfg.aiClassifications || {}), ...shared };
+}
+
 function extensionSettings() {
     const ctx = context();
     const root = ctx.extensionSettings || globalThis.extension_settings;
@@ -227,6 +250,7 @@ function extensionSettings() {
     }
     cfg.playArchiveMap = cfg.playArchiveMap && typeof cfg.playArchiveMap === 'object' ? cfg.playArchiveMap : {};
     cfg.aiClassifications = cfg.aiClassifications && typeof cfg.aiClassifications === 'object' ? cfg.aiClassifications : {};
+    mergeSharedPersistentAiClassifications(cfg);
     cfg.classifierModels = Array.isArray(cfg.classifierModels) ? cfg.classifierModels : [];
     cfg.importGuardianMap = cfg.importGuardianMap && typeof cfg.importGuardianMap === 'object' ? cfg.importGuardianMap : {};
     return cfg;
@@ -4493,7 +4517,7 @@ function installFloatingBall() {
           <i class="fa-solid fa-box-archive"></i><span><b>打开云端卡库</b><small>浏览角色并自动导入酒馆</small></span>
         </button>
       </div>
-      <button type="button" class="cv-floating-ball" aria-label="CardVault 快捷操作" title="CardVault · 拖动悬浮球 / 点击展开">
+      <button type="button" class="cv-floating-ball" aria-label="CardVault 快捷操作" title="CardVault · 拖动后自动吸边 / 点击展开">
         <i class="fa-solid fa-box-archive"></i>
         <span class="cv-floating-online" aria-hidden="true"></span>
       </button>`;
@@ -4503,6 +4527,7 @@ function installFloatingBall() {
     const menu = root.querySelector('.cv-floating-menu');
     const actions = [...root.querySelectorAll('.cv-floating-action')];
     const size = 58;
+    const edgeInset = 6;
     let x = Math.max(8, window.innerWidth - size - 18);
     let y = Math.max(8, window.innerHeight - size - 110);
     let dragging = false;
@@ -4520,7 +4545,7 @@ function installFloatingBall() {
     } catch (_) {}
 
     const clampPosition = () => {
-        x = Math.min(Math.max(8, x), Math.max(8, window.innerWidth - size - 8));
+        x = Math.min(Math.max(edgeInset, x), Math.max(edgeInset, window.innerWidth - size - edgeInset));
         y = Math.min(Math.max(8, y), Math.max(8, window.innerHeight - size - 8));
     };
     const place = () => {
@@ -4535,6 +4560,17 @@ function installFloatingBall() {
         menu.style.top = `${Math.round(Math.min(Math.max(naturalTop, minTop), maxTop))}px`;
     };
     const savePosition = () => { try { localStorage.setItem(CARDVAULT_FLOAT_POSITION_KEY, JSON.stringify({ x: Math.round(x), y: Math.round(y) })); } catch (_) {} };
+
+    const snapToNearestEdge = ({ save = true } = {}) => {
+        clampPosition();
+        const leftX = edgeInset;
+        const rightX = Math.max(edgeInset, window.innerWidth - size - edgeInset);
+        const centerX = x + size / 2;
+        x = centerX <= window.innerWidth / 2 ? leftX : rightX;
+        place();
+        if (save) savePosition();
+    };
+
     const setMenuOpen = open => {
         const next = !!open && !busy;
         root.classList.toggle('is-open', next);
@@ -4577,8 +4613,9 @@ function installFloatingBall() {
         if (activePointerId === null || event.pointerId !== activePointerId) return;
         try { ball.releasePointerCapture(activePointerId); } catch (_) {}
         activePointerId = null;
-        if (dragging) savePosition();
+        const wasDragging = dragging;
         dragging = false; root.classList.remove('is-dragging');
+        if (wasDragging) snapToNearestEdge();
         if (moved) setTimeout(() => { moved = false; }, 0);
     };
     const onBallClick = event => {
@@ -4587,7 +4624,7 @@ function installFloatingBall() {
         setMenuOpen(!root.classList.contains('is-open'));
     };
     const onOutsidePointerDown = event => { if (!root.contains(event.target)) setMenuOpen(false); };
-    const onResize = () => { place(); savePosition(); };
+    const onResize = () => { snapToNearestEdge(); };
 
     ball.addEventListener('pointerdown', onBallPointerDown);
     ball.addEventListener('pointermove', onBallPointerMove);
@@ -4599,7 +4636,8 @@ function installFloatingBall() {
     }));
     document.addEventListener('pointerdown', onOutsidePointerDown, true);
     window.addEventListener('resize', onResize);
-    place();
+    // 旧版本保存过任意横向位置时，启动后也会自动贴到最近的左右边缘。
+    snapToNearestEdge({ save: true });
 
     floatingBallCleanup = () => {
         document.removeEventListener('pointerdown', onOutsidePointerDown, true);
@@ -4923,7 +4961,7 @@ async function initialize() {
             void refreshCardListFromServer().catch(error => console.warn('[CardVault] background card-list warmup skipped', error));
             void runImportGuardianSweep({ force: true });
         }
-        console.info(`[CardVault] Import-Only 1.2.0 loaded: ST ${sillyTavernUserHandle} -> ${accountDisplayName(requiredCardVaultAccount())}; transport=${cardVaultTransportMode}`);
+        console.info(`[CardVault] Import-Only 1.2.1 loaded: ST ${sillyTavernUserHandle} -> ${accountDisplayName(requiredCardVaultAccount())}; transport=${cardVaultTransportMode}`);
     } catch (error) {
         initialized = false;
         console.error('[CardVault] Initialization failed', error);
@@ -4940,7 +4978,7 @@ document.addEventListener('keydown', handleEscape);
 
 // Optional compatibility bridge: standalone CardVault can still be opened by an existing VVV shell if present.
 globalThis.VVVUnifiedCardVault = Object.assign(globalThis.VVVUnifiedCardVault || {}, {
-    version: '1.2.0-import-only',
+    version: '1.2.1-import-only',
     build: 'import-only',
     open: async () => { if (!initialized) await initialize(); return openLibrary(); },
     close: () => closeOverlay(),
