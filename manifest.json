@@ -1,0 +1,14 @@
+{
+  "manifest_version": 1,
+  "id": "cardvault_sillytavern_extension",
+  "display_name": "CardVault · 只读角色卡导入版",
+  "version": "1.2.0",
+  "description": "CardVault Import-Only：只浏览/筛选角色卡并自动导入 SillyTavern；删除上传、删除、游玩备份与归档/归还入口，并在代码层阻止 CardVault 写请求。",
+  "author": "小狗主理人 × vvv",
+  "loading_order": 25,
+  "requires": [],
+  "optional": [],
+  "js": "index.js",
+  "css": "style.css",
+  "auto_update": true
+}
