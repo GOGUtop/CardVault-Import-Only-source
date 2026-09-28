@@ -6,7 +6,10 @@ const CARDVAULT_AUTO_LOGIN_USERNAME = 'card2';
 const CARDVAULT_AUTO_LOGIN_PASSWORD = '2';
 const CARDVAULT_FLOAT_POSITION_KEY = 'cardvault_floating_ball_position_v1';
 const CARDVAULT_AI_PERSISTENT_KEY = 'cardvault_ai_classifications_persistent_v1'; // localStorage 镜像
-const CARDVAULT_AI_SHARED_SETTINGS_KEY = 'cardvault-ai-classifications-shared-v1'; // Full+Anima 写入，Import-Only 只读
+const CARDVAULT_AI_SHARED_SETTINGS_KEY = 'cardvault-ai-classifications-shared-v1';
+const CARDVAULT_AI_SERVER_CARD_PREFIX = '__CardVault_AI_Classification_DB__';
+const CARDVAULT_AI_SERVER_EXTENSION_KEY = 'cardvault_ai_classifications';
+const CARDVAULT_AI_SERVER_SCHEMA_VERSION = 1; // Full+Anima 写入，Import-Only 只读
 const LEGACY_GLOBAL_PERSISTENT_TOKEN_KEY = 'cardvault_persistent_token_v2';
 const LEGACY_SESSION_TOKEN_KEY = 'cardvault_session_token_v1';
 const CARDVAULT_ACCESS_POLICY = Object.freeze({
@@ -246,6 +249,74 @@ function loadSharedPersistentAiClassifications() {
         console.warn('[CardVault] 无法读取 Full+Anima 的 localStorage 分类镜像', error);
     }
     return mergeSharedClassificationRecordMaps(fromLocalStorage, fromSettings);
+}
+
+
+let serverAiClassificationLoadPromise = null;
+let serverAiClassificationRecords = {};
+
+function isServerAiClassificationCardSummary(card) {
+    return String(card?.name || '').startsWith(CARDVAULT_AI_SERVER_CARD_PREFIX);
+}
+
+function extractServerAiClassificationPayload(card) {
+    try {
+        const data = valueFromCard(card);
+        const bucket = data?.extensions?.[CARDVAULT_AI_SERVER_EXTENSION_KEY];
+        if (!bucket || typeof bucket !== 'object') return null;
+        const account = String(bucket.account || '').trim();
+        if (account && account !== requiredCardVaultAccount()) return null;
+        return {
+            account: account || requiredCardVaultAccount(),
+            updatedAt: String(bucket.updatedAt || ''),
+            records: normalizeSharedClassificationRecordMap(bucket.records),
+        };
+    } catch (error) {
+        console.warn('[CardVault] 无法解析云端 AI 分类数据库卡', error);
+        return null;
+    }
+}
+
+async function hydrateServerAiClassificationsFromCardList(cards) {
+    if (serverAiClassificationLoadPromise) return serverAiClassificationLoadPromise;
+    serverAiClassificationLoadPromise = (async () => {
+        const all = Array.isArray(cards) ? cards : [];
+        let internalCards = all.filter(isServerAiClassificationCardSummary);
+        // 即使主卡库接口未来出现默认分页/上限，也单独按内部卡名前缀搜索一次，确保只读版一定能找到分类库。
+        try {
+            const searched = await apiFetch(`/api/cards?q=${encodeURIComponent(CARDVAULT_AI_SERVER_CARD_PREFIX)}`, { timeoutMs: 30000 });
+            const extra = Array.isArray(searched?.cards) ? searched.cards.filter(isServerAiClassificationCardSummary) : [];
+            const byId = new Map();
+            for (const item of [...internalCards, ...extra]) if (item?.id != null) byId.set(String(item.id), item);
+            internalCards = [...byId.values()];
+        } catch (error) {
+            console.warn('[CardVault] 单独搜索云端 AI 分类数据库卡失败，将继续使用主卡库结果', error);
+        }
+        internalCards = internalCards
+            .sort((a, b) => (Date.parse(b?.updatedAt || '') || 0) - (Date.parse(a?.updatedAt || '') || 0))
+            .slice(0, 12);
+        let serverRecords = {};
+        for (const summary of internalCards) {
+            try {
+                const detail = await apiFetch(`/api/cards/${encodeURIComponent(summary.id)}`, { timeoutMs: 30000 });
+                const payload = extractServerAiClassificationPayload(detail);
+                if (payload?.records) serverRecords = mergeSharedClassificationRecordMaps(serverRecords, payload.records);
+            } catch (error) {
+                console.warn('[CardVault] 读取云端 AI 分类数据库卡失败', summary?.id, error);
+            }
+        }
+        serverAiClassificationRecords = serverRecords;
+        if (Object.keys(serverRecords).length) {
+            const cfg = extensionSettings();
+            cfg.aiClassifications = mergeSharedClassificationRecordMaps(cfg.aiClassifications || {}, serverRecords);
+        }
+        return serverRecords;
+    })();
+    try {
+        return await serverAiClassificationLoadPromise;
+    } finally {
+        serverAiClassificationLoadPromise = null;
+    }
 }
 
 function mergeSharedPersistentAiClassifications(cfg) {
@@ -2752,7 +2823,9 @@ async function refreshCardListFromServer() {
     if (cardListRefreshPromise) return cardListRefreshPromise;
     cardListRefreshPromise = (async () => {
         const result = await apiFetch('/api/cards?q=', { timeoutMs: 30000 });
-        const cards = Array.isArray(result?.cards) ? result.cards : [];
+        const allCards = Array.isArray(result?.cards) ? result.cards : [];
+        await hydrateServerAiClassificationsFromCardList(allCards);
+        const cards = allCards.filter(card => !isServerAiClassificationCardSummary(card));
         writeCardListCache(cards);
         return cards;
     })();
@@ -2942,7 +3015,7 @@ async function loadCards(query = '', options = {}) {
         loadedCards = freshCards;
         writeCardListCache(loadedCards);
         document.querySelector('.cv-window')?.classList.remove('cv-using-cache');
-        if (changed || options.force) renderLoadedCards();
+        renderLoadedCards();
     } catch (error) {
         if (!loadedCards.length) throw error;
         console.warn('[CardVault] 后台刷新卡库失败，继续使用本地缓存', error);
@@ -4543,7 +4616,7 @@ function installFloatingBall() {
           <i class="fa-solid fa-box-archive"></i><span><b>打开云端卡库</b><small>浏览角色并自动导入酒馆</small></span>
         </button>
       </div>
-      <button type="button" class="cv-floating-ball" aria-label="CardVault 快捷操作" title="CardVault · 拖动后自动吸边 / 点击展开">
+      <button type="button" class="cv-floating-ball" aria-label="CardVault 快捷操作" title="CardVault · 拖动后自动半隐藏吸边 / 点击展开">
         <i class="fa-solid fa-box-archive"></i>
         <span class="cv-floating-online" aria-hidden="true"></span>
       </button>`;
@@ -4553,7 +4626,7 @@ function installFloatingBall() {
     const menu = root.querySelector('.cv-floating-menu');
     const actions = [...root.querySelectorAll('.cv-floating-action')];
     let size = 58;
-    const edgeInset = 0;
+    const hiddenRatio = 0.5;
     let x = Math.max(8, window.innerWidth - size - 18);
     let y = Math.max(8, window.innerHeight - size - 110);
     let dragging = false;
@@ -4584,7 +4657,10 @@ function installFloatingBall() {
         measureSize();
         const width = viewportWidth();
         const height = viewportHeight();
-        x = Math.min(Math.max(edgeInset, x), Math.max(edgeInset, width - size - edgeInset));
+        const hidden = size * hiddenRatio;
+        const minX = -hidden;
+        const maxX = width - size + hidden;
+        x = Math.min(Math.max(minX, x), maxX);
         y = Math.min(Math.max(8, y), Math.max(8, height - size - 8));
     };
     const place = () => {
@@ -4611,8 +4687,9 @@ function installFloatingBall() {
     const snapToNearestEdge = ({ save = true, preferredSide = null } = {}) => {
         clampPosition();
         const width = viewportWidth();
-        const leftX = edgeInset;
-        const rightX = Math.max(edgeInset, width - size - edgeInset);
+        const hidden = size * hiddenRatio;
+        const leftX = -hidden;
+        const rightX = width - size + hidden;
         const centerX = x + size / 2;
         const side = preferredSide === 'left' || preferredSide === 'right'
             ? preferredSide
@@ -4662,9 +4739,6 @@ function installFloatingBall() {
         event.preventDefault();
         x = startLeft + dx;
         y = startTop + dy;
-        const rightX = Math.max(edgeInset, viewportWidth() - size - edgeInset);
-        if (x <= 26) x = edgeInset;
-        else if (x >= rightX - 26) x = rightX;
         place();
     };
     const onBallPointerUp = event => {
@@ -5026,7 +5100,7 @@ async function initialize() {
             void refreshCardListFromServer().catch(error => console.warn('[CardVault] background card-list warmup skipped', error));
             void runImportGuardianSweep({ force: true });
         }
-        console.info(`[CardVault] Import-Only 1.2.2 loaded: ST ${sillyTavernUserHandle} -> ${accountDisplayName(requiredCardVaultAccount())}; transport=${cardVaultTransportMode}`);
+        console.info(`[CardVault] Import-Only 1.2.3 loaded: ST ${sillyTavernUserHandle} -> ${accountDisplayName(requiredCardVaultAccount())}; transport=${cardVaultTransportMode}`);
     } catch (error) {
         initialized = false;
         console.error('[CardVault] Initialization failed', error);
@@ -5043,7 +5117,7 @@ document.addEventListener('keydown', handleEscape);
 
 // Optional compatibility bridge: standalone CardVault can still be opened by an existing VVV shell if present.
 globalThis.VVVUnifiedCardVault = Object.assign(globalThis.VVVUnifiedCardVault || {}, {
-    version: '1.2.2-import-only',
+    version: '1.2.3-import-only',
     build: 'import-only',
     open: async () => { if (!initialized) await initialize(); return openLibrary(); },
     close: () => closeOverlay(),

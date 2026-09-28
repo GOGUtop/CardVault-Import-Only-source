@@ -5,7 +5,7 @@
 ## 保留
 
 - 云端角色卡浏览、搜索、封面展示
-- AI 标签分类与筛选（分类配置/结果仍保存在 SillyTavern 扩展设置中）
+- AI 标签筛选；启动/刷新卡库时读取 Full + Anima 写入 CardVault 云端内部数据卡的分类
 - 角色详情查看
 - **自动导入酒馆**：读取 CardVault 角色文件，导入 SillyTavern，并补齐卡内世界书与 Scoped Regex
 - 导入守护：已导入角色的卡内世界书/Scoped Regex 缺失时可自动补回
@@ -35,7 +35,14 @@ settings.html
 
 ## 版本
 
-- Import-Only: `1.2.2`
+### 1.2.3：读取 CardVault 云端分类 + 悬浮球半隐藏吸边
+
+- 只读版会从 CardVault 卡库中的内部分类数据库卡读取 Full+Anima 已完成的 AI 分类，不再依赖两个插件必须处于同一个浏览器 localStorage。
+- 内部分类数据库卡不会显示在插件角色卡列表中；只读版仍严格禁止 POST/PUT/PATCH/DELETE。
+- 悬浮球松手后吸进屏幕边缘约 50%，只露出半个球，减少遮挡。
+
+
+- Import-Only: `1.2.3`
 - 基于用户提供的 `card-main (1).zip` 修改
 
 ### 1.2.2：修复读取 Full+Anima 永久分类

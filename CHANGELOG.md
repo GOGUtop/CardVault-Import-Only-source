@@ -1,3 +1,8 @@
+## 1.2.3
+- 从 CardVault 云端内部分类数据库读取 Full+Anima 分类。
+- 保持云端只读，内部数据卡自动隐藏。
+- 悬浮球改为左右边缘半隐藏吸附。
+
 # Changelog
 
 ## 1.2.2 - Import-Only
