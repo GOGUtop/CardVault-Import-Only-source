@@ -35,10 +35,10 @@ settings.html
 
 ## 版本
 
-- Import-Only: `1.2.1`
+- Import-Only: `1.2.2`
 - 基于用户提供的 `card-main (1).zip` 修改
 
-### 1.2.1：读取 Full+Anima 永久分类
+### 1.2.2：修复读取 Full+Anima 永久分类
 
-- 本版本**不负责写入永久 AI 分类**；它读取 Full + Anima 版本写入的共享分类缓存，因此 Full + Anima 分类完成后，切换到本版本可以直接看到同一批标签并筛选。
-- 悬浮球拖动松手后自动吸附到最近的左 / 右屏幕边缘。
+- 本版本**不负责写入永久 AI 分类**；现在会同时读取 Full + Anima 写入的 SillyTavern 共享设置 `cardvault-ai-classifications-shared-v1` 与 localStorage 镜像，并在每次读取设置时重新合并，修复切换版本后看不到已分类结果的问题。
+- 悬浮球改为 0px 真正贴边，并加入移动端窗口级 `pointerup` 兜底；拖动松手后强制吸附到最近的左 / 右屏幕边缘。

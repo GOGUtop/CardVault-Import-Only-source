@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.2 - Import-Only
+
+- 修复无法读取 Full + Anima 已分类结果：新增读取 SillyTavern 共享分类命名空间，并与 localStorage 镜像合并。
+- 每次读取扩展设置都重新同步共享分类，不再使用可能过期的一次性缓存。
+- 悬浮球改为 0px 真正贴边，新增移动端窗口级 pointerup/pointercancel 兜底。
+
 ## 1.2.1 - Import-Only
 
 - 读取 Full + Anima 使用的共享永久 AI 分类缓存；Full + Anima 分类后，本版本可直接显示与筛选。

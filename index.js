@@ -5,7 +5,8 @@ const CARDVAULT_IMPORT_ONLY_BUILD = true;
 const CARDVAULT_AUTO_LOGIN_USERNAME = 'card2';
 const CARDVAULT_AUTO_LOGIN_PASSWORD = '2';
 const CARDVAULT_FLOAT_POSITION_KEY = 'cardvault_floating_ball_position_v1';
-const CARDVAULT_AI_PERSISTENT_KEY = 'cardvault_ai_classifications_persistent_v1'; // 只读取 Full+Anima 写入的共享永久分类
+const CARDVAULT_AI_PERSISTENT_KEY = 'cardvault_ai_classifications_persistent_v1'; // localStorage 镜像
+const CARDVAULT_AI_SHARED_SETTINGS_KEY = 'cardvault-ai-classifications-shared-v1'; // Full+Anima 写入，Import-Only 只读
 const LEGACY_GLOBAL_PERSISTENT_TOKEN_KEY = 'cardvault_persistent_token_v2';
 const LEGACY_SESSION_TOKEN_KEY = 'cardvault_session_token_v1';
 const CARDVAULT_ACCESS_POLICY = Object.freeze({
@@ -207,27 +208,52 @@ function removeCardVaultUi() {
     document.querySelectorAll('#cardvault_settings').forEach(node => node.remove());
 }
 
-// Import-Only 不负责写入“永久分类”；它只读取 Full+Anima 写入的共享缓存。
-// 两个版本使用同一 localStorage key，所以在 Full+Anima 分类后，切换到本版本仍会看到相同标签。
-let sharedPersistentAiClassificationCache = null;
+// Import-Only 不负责写入“永久分类”；它只读取 Full+Anima 写入的共享分类库。
+// 共享库优先使用 SillyTavern extension_settings 的独立命名空间，同时兼容 localStorage 镜像。
+function normalizeSharedClassificationRecordMap(value) {
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
+function mergeSharedClassificationRecordMaps(...maps) {
+    const merged = {};
+    for (const map of maps) {
+        for (const [key, record] of Object.entries(normalizeSharedClassificationRecordMap(map))) {
+            if (!record || typeof record !== 'object' || !Array.isArray(record.tags)) continue;
+            const existing = merged[key];
+            const existingTime = Date.parse(existing?.classifiedAt || '') || 0;
+            const nextTime = Date.parse(record?.classifiedAt || '') || 0;
+            if (!existing || nextTime >= existingTime) merged[key] = record;
+        }
+    }
+    return merged;
+}
 
 function loadSharedPersistentAiClassifications() {
+    let fromSettings = {};
+    let fromLocalStorage = {};
+    try {
+        const root = context().extensionSettings || globalThis.extension_settings;
+        const bucket = root?.[CARDVAULT_AI_SHARED_SETTINGS_KEY];
+        fromSettings = normalizeSharedClassificationRecordMap(bucket?.records ?? bucket);
+    } catch (error) {
+        console.warn('[CardVault] 无法读取 Full+Anima 的酒馆共享 AI 分类库', error);
+    }
     try {
         const raw = globalThis.localStorage?.getItem(CARDVAULT_AI_PERSISTENT_KEY) || '';
         const parsed = raw ? JSON.parse(raw) : {};
-        sharedPersistentAiClassificationCache = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+        fromLocalStorage = normalizeSharedClassificationRecordMap(parsed);
     } catch (error) {
-        console.warn('[CardVault] 无法读取 Full+Anima 共享 AI 分类缓存', error);
-        sharedPersistentAiClassificationCache = {};
+        console.warn('[CardVault] 无法读取 Full+Anima 的 localStorage 分类镜像', error);
     }
-    return sharedPersistentAiClassificationCache;
+    return mergeSharedClassificationRecordMaps(fromLocalStorage, fromSettings);
 }
 
 function mergeSharedPersistentAiClassifications(cfg) {
     const shared = loadSharedPersistentAiClassifications();
-    // 共享永久结果优先；本版本自己的临时结果只在共享缓存没有该卡时显示。
+    // 每次读取设置都重新读取共享库，不做一次性缓存，避免切换版本后仍看到旧分类。
     cfg.aiClassifications = { ...(cfg.aiClassifications || {}), ...shared };
 }
+
 
 function extensionSettings() {
     const ctx = context();
@@ -4526,8 +4552,8 @@ function installFloatingBall() {
     const ball = root.querySelector('.cv-floating-ball');
     const menu = root.querySelector('.cv-floating-menu');
     const actions = [...root.querySelectorAll('.cv-floating-action')];
-    const size = 58;
-    const edgeInset = 6;
+    let size = 58;
+    const edgeInset = 0;
     let x = Math.max(8, window.innerWidth - size - 18);
     let y = Math.max(8, window.innerHeight - size - 110);
     let dragging = false;
@@ -4538,36 +4564,62 @@ function installFloatingBall() {
     let startLeft = 0;
     let startTop = 0;
     let busy = false;
+    let restoredSide = null;
 
     try {
         const saved = JSON.parse(localStorage.getItem(CARDVAULT_FLOAT_POSITION_KEY) || 'null');
-        if (Number.isFinite(saved?.x) && Number.isFinite(saved?.y)) { x = saved.x; y = saved.y; }
+        if (saved?.side === 'left' || saved?.side === 'right') restoredSide = saved.side;
+        if (Number.isFinite(saved?.x)) x = saved.x;
+        if (Number.isFinite(saved?.y)) y = saved.y;
     } catch (_) {}
 
+    const viewportWidth = () => Math.max(1, Math.round(globalThis.visualViewport?.width || window.innerWidth || document.documentElement.clientWidth || 1));
+    const viewportHeight = () => Math.max(1, Math.round(globalThis.visualViewport?.height || window.innerHeight || document.documentElement.clientHeight || 1));
+    const measureSize = () => {
+        const measured = Math.round(ball.getBoundingClientRect().width || 0);
+        if (measured > 0) size = measured;
+        return size;
+    };
     const clampPosition = () => {
-        x = Math.min(Math.max(edgeInset, x), Math.max(edgeInset, window.innerWidth - size - edgeInset));
-        y = Math.min(Math.max(8, y), Math.max(8, window.innerHeight - size - 8));
+        measureSize();
+        const width = viewportWidth();
+        const height = viewportHeight();
+        x = Math.min(Math.max(edgeInset, x), Math.max(edgeInset, width - size - edgeInset));
+        y = Math.min(Math.max(8, y), Math.max(8, height - size - 8));
     };
     const place = () => {
         clampPosition();
-        root.style.left = `${Math.round(x)}px`;
-        root.style.top = `${Math.round(y)}px`;
-        root.dataset.side = x < window.innerWidth / 2 ? 'right' : 'left';
+        // 用 inline !important 固定坐标，避免酒馆主题或移动端样式覆盖吸边位置。
+        root.style.setProperty('left', `${Math.round(x)}px`, 'important');
+        root.style.setProperty('top', `${Math.round(y)}px`, 'important');
+        root.style.setProperty('right', 'auto', 'important');
+        root.style.setProperty('bottom', 'auto', 'important');
+        root.dataset.side = x < viewportWidth() / 2 ? 'right' : 'left';
         const estimatedHeight = 92;
         const naturalTop = (size - estimatedHeight) / 2;
         const minTop = 8 - y;
-        const maxTop = window.innerHeight - y - estimatedHeight - 8;
+        const maxTop = viewportHeight() - y - estimatedHeight - 8;
         menu.style.top = `${Math.round(Math.min(Math.max(naturalTop, minTop), maxTop))}px`;
     };
-    const savePosition = () => { try { localStorage.setItem(CARDVAULT_FLOAT_POSITION_KEY, JSON.stringify({ x: Math.round(x), y: Math.round(y) })); } catch (_) {} };
+    const savePosition = () => {
+        try {
+            const side = x + size / 2 <= viewportWidth() / 2 ? 'left' : 'right';
+            localStorage.setItem(CARDVAULT_FLOAT_POSITION_KEY, JSON.stringify({ side, y: Math.round(y) }));
+        } catch (_) {}
+    };
 
-    const snapToNearestEdge = ({ save = true } = {}) => {
+    const snapToNearestEdge = ({ save = true, preferredSide = null } = {}) => {
         clampPosition();
+        const width = viewportWidth();
         const leftX = edgeInset;
-        const rightX = Math.max(edgeInset, window.innerWidth - size - edgeInset);
+        const rightX = Math.max(edgeInset, width - size - edgeInset);
         const centerX = x + size / 2;
-        x = centerX <= window.innerWidth / 2 ? leftX : rightX;
+        const side = preferredSide === 'left' || preferredSide === 'right'
+            ? preferredSide
+            : (centerX <= width / 2 ? 'left' : 'right');
+        x = side === 'left' ? leftX : rightX;
         place();
+        root.dataset.snapped = side;
         if (save) savePosition();
     };
 
@@ -4607,7 +4659,13 @@ function installFloatingBall() {
         const dx = event.clientX - startX, dy = event.clientY - startY;
         if (!dragging && Math.hypot(dx, dy) >= 5) { dragging = true; moved = true; setMenuOpen(false); root.classList.add('is-dragging'); }
         if (!dragging) return;
-        event.preventDefault(); x = startLeft + dx; y = startTop + dy; place();
+        event.preventDefault();
+        x = startLeft + dx;
+        y = startTop + dy;
+        const rightX = Math.max(edgeInset, viewportWidth() - size - edgeInset);
+        if (x <= 26) x = edgeInset;
+        else if (x >= rightX - 26) x = rightX;
+        place();
     };
     const onBallPointerUp = event => {
         if (activePointerId === null || event.pointerId !== activePointerId) return;
@@ -4624,23 +4682,30 @@ function installFloatingBall() {
         setMenuOpen(!root.classList.contains('is-open'));
     };
     const onOutsidePointerDown = event => { if (!root.contains(event.target)) setMenuOpen(false); };
-    const onResize = () => { snapToNearestEdge(); };
+    const onResize = () => { snapToNearestEdge({ preferredSide: root.dataset.snapped || restoredSide }); };
 
     ball.addEventListener('pointerdown', onBallPointerDown);
     ball.addEventListener('pointermove', onBallPointerMove);
     ball.addEventListener('pointerup', onBallPointerUp);
     ball.addEventListener('pointercancel', onBallPointerUp);
+    // 某些移动端 WebView 会在拖出按钮范围后丢失按钮级 pointerup；窗口级兜底保证一定执行吸边。
+    window.addEventListener('pointerup', onBallPointerUp, true);
+    window.addEventListener('pointercancel', onBallPointerUp, true);
     ball.addEventListener('click', onBallClick);
     actions.forEach(button => button.addEventListener('click', event => {
         event.preventDefault(); event.stopPropagation(); setMenuOpen(false); void runAction(button.dataset.cvFloatAction);
     }));
     document.addEventListener('pointerdown', onOutsidePointerDown, true);
     window.addEventListener('resize', onResize);
-    // 旧版本保存过任意横向位置时，启动后也会自动贴到最近的左右边缘。
-    snapToNearestEdge({ save: true });
+    // 启动后立刻贴边；再等两帧按真实 CSS 尺寸复算一次，兼容手机 54px 悬浮球和主题延迟样式。
+    snapToNearestEdge({ save: true, preferredSide: restoredSide });
+    requestAnimationFrame(() => requestAnimationFrame(() => snapToNearestEdge({ save: true, preferredSide: root.dataset.snapped || restoredSide })));
+
 
     floatingBallCleanup = () => {
         document.removeEventListener('pointerdown', onOutsidePointerDown, true);
+        window.removeEventListener('pointerup', onBallPointerUp, true);
+        window.removeEventListener('pointercancel', onBallPointerUp, true);
         window.removeEventListener('resize', onResize);
         root.remove();
     };
@@ -4961,7 +5026,7 @@ async function initialize() {
             void refreshCardListFromServer().catch(error => console.warn('[CardVault] background card-list warmup skipped', error));
             void runImportGuardianSweep({ force: true });
         }
-        console.info(`[CardVault] Import-Only 1.2.1 loaded: ST ${sillyTavernUserHandle} -> ${accountDisplayName(requiredCardVaultAccount())}; transport=${cardVaultTransportMode}`);
+        console.info(`[CardVault] Import-Only 1.2.2 loaded: ST ${sillyTavernUserHandle} -> ${accountDisplayName(requiredCardVaultAccount())}; transport=${cardVaultTransportMode}`);
     } catch (error) {
         initialized = false;
         console.error('[CardVault] Initialization failed', error);
@@ -4978,7 +5043,7 @@ document.addEventListener('keydown', handleEscape);
 
 // Optional compatibility bridge: standalone CardVault can still be opened by an existing VVV shell if present.
 globalThis.VVVUnifiedCardVault = Object.assign(globalThis.VVVUnifiedCardVault || {}, {
-    version: '1.2.1-import-only',
+    version: '1.2.2-import-only',
     build: 'import-only',
     open: async () => { if (!initialized) await initialize(); return openLibrary(); },
     close: () => closeOverlay(),
